@@ -1,7 +1,10 @@
 data:
   ffhq_dir: "D:/deepshield_data/ffhq/thumbnails128x128"
-  celeb_df_dir: "D:/deepshield_data/celeb_df_v2"
-  celeb_df_faces_dir: "D:/deepshield_data/celeb_df_v2/faces"
+  # val_mode options:
+  #   ffhq_self  — no Celeb-DF needed; uses held-out FFHQ + SBI fakes for validation
+  #   celeb_df   — requires celeb_df_faces_dir with real/ and fake/ subdirs
+  val_mode: "ffhq_self"
+  celeb_df_faces_dir: "D:/deepshield_data/celeb_df_v2/faces"  # only used if val_mode=celeb_df
   img_size: 224
   sbi_prob: 0.5
   jpeg_quality_min: 40

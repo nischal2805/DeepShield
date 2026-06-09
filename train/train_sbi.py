@@ -136,10 +136,16 @@ def main(config_path: str) -> None:
         jpeg_quality_max=cfg['data']['jpeg_quality_max'],
         val_split=cfg['data']['val_split'],
     )
+    val_mode = cfg['data'].get('val_mode', 'ffhq_self')
     val_ds = SBIDataset(
-        val_faces_dir=cfg['data']['celeb_df_faces_dir'],
+        ffhq_dir=cfg['data']['ffhq_dir'] if val_mode == 'ffhq_self' else None,
+        val_faces_dir=cfg['data'].get('celeb_df_faces_dir') if val_mode == 'celeb_df' else None,
         is_train=False,
+        val_mode=val_mode,
         img_size=cfg['data']['img_size'],
+        val_split=cfg['data']['val_split'],
+        jpeg_quality_min=cfg['data']['jpeg_quality_min'],
+        jpeg_quality_max=cfg['data']['jpeg_quality_max'],
     )
     print(f"Train samples: {len(train_ds)}  |  Val samples: {len(val_ds)}")
 
