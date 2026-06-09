@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+.venv/
+env/
+
+# Checkpoints (large binary files)
+checkpoints/sbi/*.pth
+checkpoints/wavelet_clip/*.pth
+# Keep the json weight file
+!checkpoints/ensemble_weights.json
+
+# Data
+data/raw/
+D:/deepshield_data/
+
+# Huggingface cache
+.cache/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Wandb
+wandb/
+
+# Temp outputs
+outputs/
+runs/
+
+# Env files
+.env
+*.env

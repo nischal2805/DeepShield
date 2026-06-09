@@ -1,0 +1,41 @@
+data:
+  ffhq_dir: "D:/deepshield_data/ffhq/thumbnails128x128"
+  celeb_df_dir: "D:/deepshield_data/celeb_df_v2"
+  celeb_df_faces_dir: "D:/deepshield_data/celeb_df_v2/faces"
+  img_size: 224
+  sbi_prob: 0.5
+  jpeg_quality_min: 40
+  jpeg_quality_max: 100
+  val_split: 0.1          # last 10% of sorted filenames → val
+
+model:
+  backbone: efficientnet_b4
+  pretrained: true
+
+training:
+  epochs: 30
+  freeze_epochs: 5        # freeze backbone for first N epochs
+  batch_size: 16          # safe for 4060 8GB with fp16
+  grad_accum_steps: 2     # effective batch = 32
+  lr: 1.0e-4
+  lr_backbone_unfrozen: 1.0e-5
+  weight_decay: 1.0e-4
+  num_workers: 4          # Windows: keep ≤4
+  mixed_precision: true
+  persistent_workers: false  # Windows: must be false
+  grad_clip: 1.0
+
+optimizer: AdamW
+scheduler: CosineAnnealingLR
+loss: BCEWithLogitsLoss
+
+checkpoints:
+  save_dir: "D:/deepshield_data/checkpoints/sbi"
+  save_every_n_epochs: 5
+
+logging:
+  use_wandb: false        # set true and set WANDB_API_KEY to enable
+  project_name: deepshield-sbi
+  run_name: sbi_effb4
+
+seed: 42

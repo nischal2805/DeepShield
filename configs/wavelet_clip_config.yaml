@@ -1,0 +1,38 @@
+data:
+  face_dir: "D:/deepshield_data/faces"   # pre-extracted faces (run extract_faces.py first)
+  # Directory structure expected:
+  # faces/train/real/  faces/train/fake/
+  # faces/val/real/    faces/val/fake/
+  img_size: 224
+  val_split: 0.1
+
+model:
+  clip_model: "openai/clip-vit-large-patch14"
+  clip_frozen: true
+
+training:
+  epochs: 40
+  batch_size: 16          # RTX 4060 8GB with fp16
+  grad_accum_steps: 2     # effective batch = 32
+  lr_wavelet: 2.0e-4
+  lr_clip_proj: 5.0e-5
+  weight_decay: 1.0e-4
+  num_workers: 4
+  mixed_precision: true
+  persistent_workers: false
+  grad_clip: 1.0
+  focal_loss_gamma: 2.0
+  focal_loss_alpha: 0.25
+
+scheduler: OneCycleLR
+
+checkpoints:
+  save_dir: "D:/deepshield_data/checkpoints/wavelet_clip"
+  save_every_n_epochs: 5
+
+logging:
+  use_wandb: false
+  project_name: deepshield-wavelet-clip
+  run_name: wclip_run1
+
+seed: 42
