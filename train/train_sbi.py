@@ -13,9 +13,14 @@ OOM mitigation:
 import argparse
 import json
 import multiprocessing
+import os
 import sys
 from pathlib import Path
 
+os.environ.setdefault('TRANSFORMERS_OFFLINE', '1')
+os.environ.setdefault('HF_HUB_OFFLINE', '1')
+
+import cv2  # noqa: F401  load order matters on Windows
 import torch
 import torch.nn as nn
 import yaml
@@ -23,6 +28,10 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# Pre-load the inference pipeline first: it imports cv2/torchvision/grad-cam in an
+# order that initializes native DLLs safely. Importing models.* directly (timm +
+# transformers) without this segfaults on Windows (exit 0xC0000005).
+import inference.pipeline  # noqa: F401
 from data.preprocess.prepare_datasets import SBIDataset
 from evaluate.metrics import compute_auc, compute_fnr
 from models.sbi_branch import SBIBranch

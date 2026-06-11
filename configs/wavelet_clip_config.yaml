@@ -1,5 +1,5 @@
 data:
-  face_dir: "D:/deepshield_data/faces"   # pre-extracted faces (run extract_faces.py first)
+  face_dir: "D:/deepshield_data/wclip_faces"   # local FF++ faces (build_wclip_faces.py)
   # Directory structure expected:
   # faces/train/real/  faces/train/fake/
   # faces/val/real/    faces/val/fake/
@@ -9,16 +9,18 @@ data:
 model:
   clip_model: "openai/clip-vit-large-patch14"
   clip_frozen: true
+  # CLIP weights not in local HF cache => warm-start full model from this checkpoint.
+  init_ckpt: "D:/deepshield_data/checkpoints/wavelet_clip/wavelet_clip_OLD_leaky.pth"
 
 training:
-  epochs: 40
-  batch_size: 16          # RTX 4060 8GB with fp16
-  grad_accum_steps: 2     # effective batch = 32
+  epochs: 20
+  batch_size: 8           # RTX 4060 8GB with fp16 + 2 unfrozen CLIP blocks
+  grad_accum_steps: 2     # effective batch = 16
   lr_wavelet: 2.0e-4
   lr_clip_proj: 5.0e-5
   # Partial CLIP unfreeze — fixes the underfit from a fully-frozen backbone.
   # 0 = old frozen behavior. 2-4 recommended (Kaggle T4 fits 3 at batch 16 fp16).
-  clip_unfreeze_blocks: 3
+  clip_unfreeze_blocks: 2
   lr_clip_backbone: 1.0e-6   # very low LR for the unfrozen CLIP blocks
   weight_decay: 1.0e-4
   num_workers: 4

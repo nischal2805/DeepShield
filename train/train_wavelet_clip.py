@@ -11,9 +11,14 @@ Note: Kaggle is recommended for this training (40 epochs × CLIP download).
 import argparse
 import json
 import multiprocessing
+import os
 import sys
 from pathlib import Path
 
+os.environ.setdefault('TRANSFORMERS_OFFLINE', '1')
+os.environ.setdefault('HF_HUB_OFFLINE', '1')
+
+import cv2  # noqa: F401  load order matters on Windows
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -22,6 +27,9 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# Pre-load inference.pipeline first so native DLLs (timm/transformers) init in a safe
+# order; importing models.* directly segfaults on Windows (0xC0000005).
+import inference.pipeline  # noqa: F401
 from data.preprocess.prepare_datasets import WaveletCLIPDataset
 from evaluate.metrics import compute_auc, compute_fnr
 from models.wavelet_clip import WaveletCLIP
@@ -123,8 +131,16 @@ def main(config_path: str) -> None:
     val_loader    = DataLoader(val_ds,   batch_size=cfg['training']['batch_size'] * 2, shuffle=False, **loader_kwargs)
 
     # ── Model ──
-    print("Loading CLIP model (this may take a minute on first run)...")
-    model = WaveletCLIP(clip_model_name=cfg['model']['clip_model']).to(device)
+    # CLIP pretrained weights are not in the local HF cache (offline). Warm-start the
+    # whole model from an existing checkpoint instead (it already holds the CLIP weights).
+    init_ckpt = cfg['model'].get('init_ckpt')
+    pretrained = init_ckpt is None
+    print(f"Building WaveletCLIP (pretrained={pretrained}, init_ckpt={init_ckpt})...")
+    model = WaveletCLIP(clip_model_name=cfg['model']['clip_model'], pretrained=pretrained).to(device)
+    if init_ckpt:
+        sd = torch.load(init_ckpt, map_location=device)
+        model.load_state_dict(sd.get('model_state', sd))
+        print(f"Warm-started from {init_ckpt}")
 
     criterion = FocalLoss(gamma=cfg['training']['focal_loss_gamma'], alpha=cfg['training']['focal_loss_alpha'])
     scaler    = torch.amp.GradScaler('cuda', enabled=cfg['training']['mixed_precision'])

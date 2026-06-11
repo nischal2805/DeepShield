@@ -46,12 +46,17 @@ def main():
         i = args.index('--branch')
         branch = args[i + 1]
         del args[i:i + 2]
+    wclip_ckpt = None
+    if '--wclip-ckpt' in args:
+        i = args.index('--wclip-ckpt')
+        wclip_ckpt = args[i + 1]
+        del args[i:i + 2]
     paths = collect(args)
     if not paths:
         print('No images found.')
         sys.exit(1)
 
-    p = DeepShieldPipeline()
+    p = DeepShieldPipeline(wclip_ckpt=wclip_ckpt)
     print(f"\nTesting {len(paths)} images "
           f"(weights SBI={float(p.ensemble.w_sbi):.2f} WCLIP={float(p.ensemble.w_wclip):.2f}, "
           f"device={p.device})\n")
