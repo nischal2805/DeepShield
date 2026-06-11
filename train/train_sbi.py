@@ -115,11 +115,12 @@ def save_checkpoint(model, optimizer, epoch: int, metrics: dict, save_dir: Path,
     torch.save(ckpt, save_dir / f'sbi_{tag}.pth')
 
 
-def main(config_path: str) -> None:
+def main(config_path: str, resume: str = '') -> None:
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
 
     set_seed(cfg['seed'])
+    torch.backends.cudnn.benchmark = True
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Device: {device}")
     if device.type == 'cuda':
@@ -127,6 +128,7 @@ def main(config_path: str) -> None:
         print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
 
     # ── Datasets ──
+    preload = cfg['data'].get('preload', True)
     train_ds = SBIDataset(
         ffhq_dir=cfg['data']['ffhq_dir'],
         is_train=True,
@@ -135,6 +137,7 @@ def main(config_path: str) -> None:
         jpeg_quality_min=cfg['data']['jpeg_quality_min'],
         jpeg_quality_max=cfg['data']['jpeg_quality_max'],
         val_split=cfg['data']['val_split'],
+        preload=preload,
     )
     val_mode = cfg['data'].get('val_mode', 'ffhq_self')
     val_ds = SBIDataset(
@@ -146,14 +149,15 @@ def main(config_path: str) -> None:
         val_split=cfg['data']['val_split'],
         jpeg_quality_min=cfg['data']['jpeg_quality_min'],
         jpeg_quality_max=cfg['data']['jpeg_quality_max'],
+        preload=preload,
     )
     print(f"Train samples: {len(train_ds)}  |  Val samples: {len(val_ds)}")
 
-    # Windows: persistent_workers must be False
     loader_kwargs = dict(
         num_workers=cfg['training']['num_workers'],
         pin_memory=True,
-        persistent_workers=False,  # Windows requirement
+        persistent_workers=False,
+        prefetch_factor=cfg['training'].get('prefetch_factor', 2) if cfg['training']['num_workers'] > 0 else None,
     )
     train_loader = DataLoader(
         train_ds, batch_size=cfg['training']['batch_size'],
@@ -170,16 +174,41 @@ def main(config_path: str) -> None:
     print("Backbone frozen for first", cfg['training']['freeze_epochs'], "epochs")
 
     criterion = nn.BCEWithLogitsLoss()
-    scaler    = torch.amp.GradScaler('cuda', enabled=cfg['training']['mixed_precision'])
+    scaler    = torch.amp.GradScaler('cuda', enabled=cfg['training']['mixed_precision'])  # type: ignore[attr-defined]
     optimizer = build_optimizer(model, cfg, frozen=True)
 
-    total_epochs = cfg['training']['epochs']
+    total_epochs  = cfg['training']['epochs']
     freeze_epochs = cfg['training']['freeze_epochs']
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_epochs)
+    scheduler     = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_epochs)
 
-    save_dir = Path(cfg['checkpoints']['save_dir'])
-    best_auc = 0.0
-    history  = []
+    save_dir  = Path(cfg['checkpoints']['save_dir'])
+    best_auc  = 0.0
+    history   = []
+    start_epoch = 1
+
+    # ── Resume from checkpoint ──
+    if resume:
+        ckpt = torch.load(resume, map_location=device)
+        model.load_state_dict(ckpt['model_state'])
+        start_epoch = ckpt['epoch'] + 1
+        best_auc    = ckpt['metrics'].get('auc', 0.0)
+        # Rebuild optimizer/scheduler at correct freeze state
+        if start_epoch > freeze_epochs:
+            model.unfreeze_backbone()
+            optimizer = build_optimizer(model, cfg, frozen=False)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=total_epochs - freeze_epochs
+            )
+        optimizer.load_state_dict(ckpt['optim_state'])
+        # Advance scheduler steps already done
+        for _ in range(start_epoch - 1):
+            scheduler.step()
+        print(f"Resumed from {resume}  (epoch {ckpt['epoch']}, best_auc={best_auc:.4f})")
+        # Load history if exists
+        hist_path = save_dir / 'sbi_history.json'
+        if hist_path.exists():
+            with open(hist_path) as f:
+                history = json.load(f)
 
     # ── wandb (optional) ──
     use_wandb = cfg['logging']['use_wandb']
@@ -191,16 +220,20 @@ def main(config_path: str) -> None:
             config=cfg,
         )
 
-    print(f"\nStarting training for {total_epochs} epochs...")
-    for epoch in range(1, total_epochs + 1):
+    print(f"\nStarting training for {total_epochs} epochs (from epoch {start_epoch})...")
+    for epoch in range(start_epoch, total_epochs + 1):
         # Unfreeze backbone at epoch freeze_epochs+1, rebuild optimizer
         if epoch == freeze_epochs + 1:
             model.unfreeze_backbone()
+            # Gradient checkpointing: recompute activations during backward
+            # instead of storing them — cuts VRAM ~60% at ~30% speed cost
+            model.backbone.set_grad_checkpointing(True)
+            torch.cuda.empty_cache()
             optimizer = build_optimizer(model, cfg, frozen=False)
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer, T_max=total_epochs - freeze_epochs
             )
-            print(f"\nEpoch {epoch}: backbone unfrozen, lr_backbone={cfg['training']['lr_backbone_unfrozen']}")
+            print(f"\nEpoch {epoch}: backbone unfrozen + grad checkpointing, lr_backbone={cfg['training']['lr_backbone_unfrozen']}")
 
         train_loss = train_one_epoch(
             model, train_loader, optimizer, scaler, criterion,
@@ -228,7 +261,7 @@ def main(config_path: str) -> None:
         if val_metrics['auc'] > best_auc:
             best_auc = val_metrics['auc']
             save_checkpoint(model, optimizer, epoch, val_metrics, save_dir, 'best_auc')
-            print(f"  ★ New best AUC: {best_auc:.4f}")
+            print(f"  ** New best AUC: {best_auc:.4f}")
 
         # Periodic checkpoint
         if epoch % cfg['checkpoints']['save_every_n_epochs'] == 0:
@@ -252,6 +285,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default='configs/sbi_config.yaml')
+    parser.add_argument('--resume', default='', help='Path to checkpoint .pth to resume from')
     args = parser.parse_args()
 
-    main(args.config)
+    main(args.config, resume=args.resume)

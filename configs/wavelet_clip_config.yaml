@@ -16,6 +16,10 @@ training:
   grad_accum_steps: 2     # effective batch = 32
   lr_wavelet: 2.0e-4
   lr_clip_proj: 5.0e-5
+  # Partial CLIP unfreeze — fixes the underfit from a fully-frozen backbone.
+  # 0 = old frozen behavior. 2-4 recommended (Kaggle T4 fits 3 at batch 16 fp16).
+  clip_unfreeze_blocks: 3
+  lr_clip_backbone: 1.0e-6   # very low LR for the unfrozen CLIP blocks
   weight_decay: 1.0e-4
   num_workers: 4
   mixed_precision: true

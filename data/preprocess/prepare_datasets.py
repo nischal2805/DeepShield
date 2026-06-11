@@ -20,7 +20,7 @@ import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
 
-from .sbi_generator import generate_sbi_pair
+from .sbi_generator import generate_self_blend
 
 # ── ImageNet normalization ────────────────────────────────────────────────────
 _IN_MEAN = [0.485, 0.456, 0.406]
@@ -80,6 +80,7 @@ class SBIDataset(Dataset):
         jpeg_quality_min: int = 40,
         jpeg_quality_max: int = 100,
         val_split: float = 0.1,
+        preload: bool = False,
     ):
         self.is_train          = is_train
         self.val_mode          = val_mode
@@ -90,6 +91,7 @@ class SBIDataset(Dataset):
         self.transform         = get_train_transforms(img_size) if is_train else get_val_transforms(img_size)
         self.real_files: list  = []
         self.samples:    list  = []
+        self._cache: Optional[list] = None
 
         # Load FFHQ file list if needed
         if ffhq_dir is not None:
@@ -127,6 +129,13 @@ class SBIDataset(Dataset):
                     raise FileNotFoundError(f"No val samples in {val_faces_dir}")
                 print(f"[SBIDataset] val=celeb_df  {len(self.samples)} samples")
 
+        # Preload images into RAM (eliminates disk I/O during training)
+        if preload and self.real_files:
+            print(f"[SBIDataset] preloading {len(self.real_files)} images into RAM...")
+            self._cache = [_load_rgb(p) for p in self.real_files]
+            loaded = sum(1 for x in self._cache if x is not None)
+            print(f"[SBIDataset] preload done  {loaded}/{len(self.real_files)} loaded")
+
     def __len__(self) -> int:
         if self.is_train or self.val_mode == 'ffhq_self':
             return len(self.real_files)
@@ -143,17 +152,25 @@ class SBIDataset(Dataset):
         img = cv2.resize(img, (self.img_size, self.img_size))
         return self.transform(img), torch.tensor(label, dtype=torch.float32)
 
+    def _get_img(self, idx: int) -> np.ndarray:
+        if self._cache is not None:
+            img = self._cache[idx]
+        else:
+            img = _load_rgb(self.real_files[idx])
+        return img if img is not None else np.zeros((self.img_size, self.img_size, 3), np.uint8)
+
     def _sbi_item(self, idx: int, use_sbi_prob: bool):
         """Generate real or SBI-fake sample. use_sbi_prob=False → 50/50 for val."""
-        _f1   = _load_rgb(self.real_files[idx])
-        face1 = _f1 if _f1 is not None else np.zeros((self.img_size, self.img_size, 3), np.uint8)
+        face1 = self._get_img(idx)
 
         prob = self.sbi_prob if use_sbi_prob else 0.5
         if random.random() < prob:
-            donor_idx = random.randint(0, len(self.real_files) - 1)
-            _f2   = _load_rgb(self.real_files[donor_idx])
-            face2 = _f2 if _f2 is not None else face1.copy()
-            _, fake = generate_sbi_pair(face1, face2, self.jpeg_quality_min, self.jpeg_quality_max)
+            # True SBI: self-blend face1 with a transformed copy of itself.
+            _, fake = generate_self_blend(
+                face1,
+                jpeg_quality_min=self.jpeg_quality_min,
+                jpeg_quality_max=self.jpeg_quality_max,
+            )
             img   = cv2.resize(fake, (self.img_size, self.img_size))
             label = 1
         else:

@@ -12,12 +12,15 @@ Usage (CLI):
 """
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
 from typing import Optional
 
 import cv2
+
+os.environ.setdefault('TRANSFORMERS_OFFLINE', '1')
 import numpy as np
 import torch
 from torchvision import transforms
@@ -92,7 +95,7 @@ class DeepShieldPipeline:
         sbi_model.eval()
 
         print("Loading Wavelet-CLIP model...")
-        wclip_model = WaveletCLIP().to(self.device)
+        wclip_model = WaveletCLIP(pretrained=False).to(self.device)
         ckpt = torch.load(self.wclip_ckpt, map_location=self.device)
         wclip_model.load_state_dict(ckpt['model_state'])
         wclip_model.eval()

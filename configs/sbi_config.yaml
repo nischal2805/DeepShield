@@ -1,15 +1,22 @@
 data:
-  ffhq_dir: "D:/deepshield_data/ffhq/thumbnails128x128"
+  # IMPORTANT: use HIGH-RES real faces here, NOT 128px thumbnails.
+  # SBI blend artifacts are subtle high-frequency cues that vanish at 128px
+  # (and 128->224 upscaling created the false positives we saw). Use FFHQ
+  # 256/512/1024, VGGFace2, or faces extracted from FF++ originals (>=224 native).
+  ffhq_dir: "D:/deepshield_data/ffpp/sbi_real"   # FF++ original faces (native-res), self-blend source
   # val_mode options:
-  #   ffhq_self  — no Celeb-DF needed; uses held-out FFHQ + SBI fakes for validation
-  #   celeb_df   — requires celeb_df_faces_dir with real/ and fake/ subdirs
-  val_mode: "ffhq_self"
-  celeb_df_faces_dir: "D:/deepshield_data/celeb_df_v2/faces"  # only used if val_mode=celeb_df
+  #   ffhq_self  — DO NOT USE for real eval: validates SBI fakes against SBI fakes
+  #                (same distribution) => leaked, meaningless 0.99 AUC.
+  #   celeb_df   — REAL deepfakes. Requires celeb_df_faces_dir with real/ fake/ subdirs.
+  #                Point this at FF++ or Celeb-DF faces (run extract_faces.py first).
+  val_mode: "celeb_df"
+  celeb_df_faces_dir: "D:/deepshield_data/ffpp/val_faces"  # <dir>/real/*.jpg  <dir>/fake/*.jpg (FF++ held-out videos)
   img_size: 224
   sbi_prob: 0.5
   jpeg_quality_min: 40
   jpeg_quality_max: 100
-  val_split: 0.1          # last 10% of sorted filenames → val
+  val_split: 0.1          # only used by ffhq_self; for celeb_df the val set is the dir above
+  preload: true           # load all images into RAM at startup (needs enough RAM)
 
 model:
   backbone: efficientnet_b4
@@ -18,12 +25,13 @@ model:
 training:
   epochs: 30
   freeze_epochs: 5        # freeze backbone for first N epochs
-  batch_size: 16          # safe for 4060 8GB with fp16
+  batch_size: 16
   grad_accum_steps: 2     # effective batch = 32
   lr: 1.0e-4
   lr_backbone_unfrozen: 1.0e-5
   weight_decay: 1.0e-4
-  num_workers: 4          # Windows: keep ≤4
+  num_workers: 4
+  prefetch_factor: 4      # prefetch batches ahead
   mixed_precision: true
   persistent_workers: false  # Windows: must be false
   grad_clip: 1.0

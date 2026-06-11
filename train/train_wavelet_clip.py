@@ -129,16 +129,28 @@ def main(config_path: str) -> None:
     criterion = FocalLoss(gamma=cfg['training']['focal_loss_gamma'], alpha=cfg['training']['focal_loss_alpha'])
     scaler    = torch.amp.GradScaler('cuda', enabled=cfg['training']['mixed_precision'])
 
-    optimizer = torch.optim.AdamW([
+    param_groups = [
         {'params': model.wavelet_branch.parameters(),       'lr': cfg['training']['lr_wavelet']},
         {'params': model.clip_projection.proj.parameters(), 'lr': cfg['training']['lr_clip_proj']},
         {'params': model.fusion.parameters(),               'lr': cfg['training']['lr_wavelet']},
-    ], weight_decay=cfg['training']['weight_decay'])
+    ]
+    # Partial CLIP unfreeze — lets the backbone adapt instead of underfitting.
+    # 0 = fully frozen (old behavior). 2-4 recommended on Kaggle T4.
+    n_unfreeze = cfg['training'].get('clip_unfreeze_blocks', 0)
+    lr_clip_backbone = cfg['training'].get('lr_clip_backbone', 1.0e-6)
+    if n_unfreeze > 0:
+        clip_params = model.unfreeze_clip_layers(n_unfreeze)
+        param_groups.append({'params': clip_params, 'lr': lr_clip_backbone})
+        print(f"Unfroze last {n_unfreeze} CLIP blocks "
+              f"({sum(p.numel() for p in clip_params)/1e6:.1f}M params) at lr={lr_clip_backbone}")
+
+    optimizer = torch.optim.AdamW(param_groups, weight_decay=cfg['training']['weight_decay'])
 
     total_steps = len(train_loader) * cfg['training']['epochs']
+    # max_lr per group must match optimizer param_groups (4th appears if CLIP unfrozen)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
-        max_lr=[cfg['training']['lr_wavelet'], cfg['training']['lr_clip_proj'], cfg['training']['lr_wavelet']],
+        max_lr=[g['lr'] for g in param_groups],
         total_steps=total_steps,
     )
 

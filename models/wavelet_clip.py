@@ -50,13 +50,37 @@ class WaveletBranch(nn.Module):
 
 class CLIPProjection(nn.Module):
     # CLIP ViT-L/14 CLS token → 1024-dim → FC → 512-dim
-    def __init__(self, clip_model_name="openai/clip-vit-large-patch14"):
+    def __init__(self, clip_model_name="openai/clip-vit-large-patch14", pretrained: bool = True):
         super().__init__()
-        self.clip = CLIPModel.from_pretrained(clip_model_name)
+        if pretrained:
+            self.clip = CLIPModel.from_pretrained(clip_model_name)
+        else:
+            from transformers import CLIPConfig
+            cfg = CLIPConfig.from_pretrained(clip_model_name, local_files_only=True)
+            self.clip = CLIPModel(cfg)  # type: ignore[arg-type]
         for p in self.clip.parameters():
             p.requires_grad = False
 
         self.proj = nn.Sequential(nn.Linear(1024, 512), nn.ReLU(inplace=True))
+
+    def unfreeze_last_blocks(self, n: int) -> list:
+        """
+        Unfreeze the last `n` CLIP vision transformer blocks (+ final layernorm)
+        so the backbone can adapt to deepfake cues instead of underfitting on a
+        frozen encoder. Returns the list of now-trainable parameters.
+        """
+        if n <= 0:
+            return []
+        trainable = []
+        layers = self.clip.vision_model.encoder.layers
+        for blk in layers[-n:]:
+            for p in blk.parameters():
+                p.requires_grad = True
+                trainable.append(p)
+        for p in self.clip.vision_model.post_layernorm.parameters():
+            p.requires_grad = True
+            trainable.append(p)
+        return trainable
 
     def forward(self, pixel_values):
         out = self.clip.vision_model(pixel_values=pixel_values)
@@ -71,10 +95,10 @@ class WaveletCLIP(nn.Module):
     _IN_MEAN   = [0.485, 0.456, 0.406]
     _IN_STD    = [0.229, 0.224, 0.225]
 
-    def __init__(self, clip_model_name="openai/clip-vit-large-patch14"):
+    def __init__(self, clip_model_name="openai/clip-vit-large-patch14", pretrained: bool = True):
         super().__init__()
         self.wavelet_branch  = WaveletBranch()
-        self.clip_projection = CLIPProjection(clip_model_name)
+        self.clip_projection = CLIPProjection(clip_model_name, pretrained=pretrained)
 
         self.fusion = nn.Sequential(
             nn.Linear(1024, 256),
@@ -90,6 +114,10 @@ class WaveletCLIP(nn.Module):
         self.register_buffer('_in_std',    torch.tensor(self._IN_STD).view(1, 3, 1, 1))
         self.register_buffer('_clip_mean', torch.tensor(self._CLIP_MEAN).view(1, 3, 1, 1))
         self.register_buffer('_clip_std',  torch.tensor(self._CLIP_STD).view(1, 3, 1, 1))
+
+    def unfreeze_clip_layers(self, n: int) -> list:
+        """Expose CLIP partial unfreeze to the trainer. Returns trainable params."""
+        return self.clip_projection.unfreeze_last_blocks(n)
 
     def _to_clip_norm(self, x_imagenet):
         """Re-normalize from ImageNet to CLIP normalization."""
