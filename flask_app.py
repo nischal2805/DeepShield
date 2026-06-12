@@ -21,6 +21,7 @@ from models.aigen_branch import AIGenDetector  # noqa: E402
 
 import numpy as np
 from flask import Flask, request, jsonify, render_template
+from flask_cors import CORS
 
 # ── Checkpoint paths ────────────────────────────────────────────────────────────
 CKPT_NEW    = 'D:/deepshield_data/checkpoints/wavelet_clip/wavelet_clip_best_auc.pth'
@@ -59,6 +60,7 @@ print("\n[OK] All three models ready.\n")
 
 # ── Flask app ────────────────────────────────────────────────────────────────────
 app = Flask(__name__)
+CORS(app, origins=['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:3001'])
 # ── Routes ───────────────────────────────────────────────────────────────────────
 
 @app.route('/')
